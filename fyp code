@@ -1,0 +1,120 @@
+#include <Arduino.h>
+#include <DHTesp.h>
+#include <esp32Servo.h>
+
+// Pins
+#define MOISTURE_SENSOR_PIN 34
+#define SOUND_SENSOR_PIN 35
+#define DHT_PIN 26
+#define RELAY_PIN 27
+#define SERVO_PIN 14
+#define STATUS_LED_PIN 2 // Onboard LED
+
+// Constants
+#define MOISTURE_THRESHOLD 50 // Moisture percentage threshold
+#define MAX_MOISTURE_LEVEL 4095
+#define MIN_MOISTURE_LEVEL 0
+#define TEMPERATURE_THRESHOLD 30.0
+#define SOUND_THRESHOLD 775 // Adjust based on your environment
+#define CRY_DETECTION_DURATION 500 // Time in ms to consider a cry detected
+
+// Components
+DHTesp dht; // Temperature and humidity sensor
+Servo servoMotor; // Servo motor for movement
+
+// Variables for tracking sound events
+unsigned long soundStart = 0;
+bool detectingCry = false;
+
+// Function prototypes
+void checkMoistureSensor();
+void checkTemperatureSensor();
+void detectBabyCry();
+void triggerCryResponse(); // Add the missing function prototype
+
+void setup() {
+  Serial.begin(115200);
+
+  // Initialize components
+  dht.setup(DHT_PIN, DHTesp::DHT11);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  servoMotor.attach(SERVO_PIN);
+
+  // System initialized message
+  Serial.println("System Initialized.");
+  digitalWrite(STATUS_LED_PIN, HIGH); // Indicate system is active
+}
+
+void loop() {
+  checkMoistureSensor();     // Monitor moisture levels
+  checkTemperatureSensor();  // Monitor temperature and control fan
+  detectBabyCry();           // Detect baby cry and control servo
+  delay(300);                // General loop delay
+}
+
+void checkMoistureSensor() {
+  int moistureLevel = analogRead(MOISTURE_SENSOR_PIN);
+  float moisturePercentage = map(moistureLevel, MIN_MOISTURE_LEVEL, MAX_MOISTURE_LEVEL, 0, 100);
+
+  if (moistureLevel < MIN_MOISTURE_LEVEL || moistureLevel > MAX_MOISTURE_LEVEL) {
+    Serial.println("Moisture sensor reading out of range!");
+  } else {
+    Serial.print("Moisture Level: ");
+    Serial.print(moisturePercentage);
+    Serial.println(" %");
+    if (moisturePercentage < MOISTURE_THRESHOLD) {
+      Serial.println("Dry Condition");
+    } else {
+      Serial.println("Moisture Detected!.");
+    }
+  }
+}
+
+void checkTemperatureSensor() {
+  TempAndHumidity sensorData = dht.getTempAndHumidity();
+
+  if (dht.getStatus() == DHTesp::ERROR_NONE) {
+    Serial.print("Temperature: ");
+    Serial.print(sensorData.temperature);
+    Serial.println(" °C");
+
+    if (sensorData.temperature > TEMPERATURE_THRESHOLD) {
+      digitalWrite(RELAY_PIN, HIGH);
+      Serial.println("Fan ON (Temperature above threshold).");
+    } else {
+      digitalWrite(RELAY_PIN, LOW);
+      Serial.println("Fan OFF (Temperature below threshold).");
+    }
+  } else {
+    Serial.println("Failed to read from DHT sensor!");
+  }
+}
+
+void detectBabyCry() {
+  int soundLevel = analogRead(SOUND_SENSOR_PIN); // Read sound intensity
+  Serial.print("Sound Level: ");
+  Serial.println(soundLevel);
+
+  // Check if sound level exceeds the threshold
+  if (soundLevel > SOUND_THRESHOLD) {
+    if (!detectingCry) {
+      soundStart = millis(); // Start timing high sound levels
+      detectingCry = true;
+    } else if (millis() - soundStart < CRY_DETECTION_DURATION) {
+      Serial.println("Baby Cry Detected!");
+      triggerCryResponse();
+      detectingCry = false; // Reset detection
+    }
+  } else {
+    // Reset detection if sound drops below the threshold
+    detectingCry = false;
+  }
+}
+
+// Function to trigger response to detected cry
+void triggerCryResponse() {
+  servoMotor.write(90);  // Move servo to 90 degrees
+  delay(1000);
+  servoMotor.write(0);   // Return servo to 0 degrees
+}
